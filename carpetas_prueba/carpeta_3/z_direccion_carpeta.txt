@@ -1,1 +1,1 @@
-Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_1
+/home/santy/Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_3
