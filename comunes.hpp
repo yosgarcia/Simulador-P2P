@@ -2,7 +2,12 @@
 #define COMUNES_HPP
 
 #include <string>
-#include <tuple> 
+#include <tuple>
+
+typedef struct ip_port{
+    std::string ip;
+    int port;
+} ip_port;
 
 class FileInfo {
 public:
@@ -25,5 +30,4 @@ public:
         return std::tie(hash1, hash2, size) < std::tie(other.hash1, other.hash2, other.size);
     }
 };
-
 #endif
