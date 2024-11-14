@@ -153,39 +153,56 @@ void connectToServer(ip_port info_cliente, ip_port info_server) {
 
     int cant_archivos = files.size();
     // Convertir el número a network byte order y enviarlo al servidor
-    int number_network_order = htonl(cant_archivos);
-    send(sock, &number_network_order, sizeof(number_network_order), 0);
-    std::cout << "Entero enviado al servidor: " << cant_archivos << std::endl;
+    if(!sendIntThroughRed(sock, cant_archivos)){
+        cout << "Error enviando cantidad de archivos iniciales al servidor\n";
+        return;
+    }
+
+    cout << "Entero enviado al servidor: " << cant_archivos << std::endl;
 
     // Serializar y enviar los datos de cada archivo
     for (const auto& [fileInfo, fileName] : files) {
-        // Empaquetar los datos en un string
-        ostringstream dataStream;
-        dataStream << fileInfo.hash1 << " " << fileInfo.hash2 << " " << fileInfo.size << " " << fileName << "\n";
-        string data = dataStream.str();
-
-        // Enviar el tamaño del archivo (en bytes)
-        int data_size = data.size();
-        cout <<"datos_size a enviar " << data_size << '\n';
-        int data_size_network_order = htonl(data_size);  // Convertir a network byte order
-        send(sock, &data_size_network_order, sizeof(data_size_network_order), 0);
-
-        char confirmacion[3];
-        int confirmacion_recibida = recv(sock, confirmacion, sizeof(confirmacion), 0);
-
-        char confirmacion2[3];
-        // Enviar los datos serializados del archivo
-        send(sock, data.c_str(), data.size(), 0);
-        confirmacion_recibida = recv(sock, confirmacion2, sizeof(confirmacion), 0);
-
+        if (!sendFileInfoWithNameThroughRed(sock,fileInfo,fileName)){
+            cerr << "Error enviado por red el archivo: " << fileName << endl;
+            break;
+        }
     }
 
+    cout << "Archivos enviados al servidor\n";
+    while (true){
+        //Recibir nombre del archivo que se quiere pedir
+        
+        cout << "Introduzca el nombre del archivo que quiere obtener. Presione Enter en una línea vacía para terminar:\nFind ";
+        string file_name;
+        getline(cin, file_name);
+
+        int data_size = file_name.size();
+        if (data_size < 1){
+            cout << "Introduzca un nombre valido.\n";
+            continue;
+        }
+
+        //Enviar el nombre del archivo
+        if (!sendStringThroughRed(sock,file_name)){
+            cout << "xd\n";
+            cerr << "Error enviando el nombre de archivo por red\n";
+            break;
+        }
+        /*
+        int number_files_to_choose;
+        if (!receiveIntThroughRed(sock,number_files_to_choose)){
+            cerr << "Error al recibir la cantidad de archivos con el nombre pedido\n";
+            return;
+        }
+        */
+       cout <<"haha\n";
+    }
     close(sock);
 }
 
-void start( ip_port client_info, ip_port server_info ){
+void start( ip_port client_info, ip_port server_info, string ruta ){
     files = map<FileInfo,string> ();
-    listFilesInDirectory("/home/santy/Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_1");
+    listFilesInDirectory(ruta);
     print_files_saved();
 
     // Crear un hilo para conectar al servidor
@@ -194,45 +211,55 @@ void start( ip_port client_info, ip_port server_info ){
 
 }
 
-bool parseIpPort(const char* arg, string &ip, int &port) {
-    string ip_port = arg;
-    size_t colon_pos = ip_port.find(':');
-    if (colon_pos == string::npos) {
-        return false; // Formato inválido
-    }
 
-    ip = ip_port.substr(0, colon_pos);
-    try {
-        port = std::stoi(ip_port.substr(colon_pos + 1));
-    } catch (const std::exception& e) {
-        return false; // Error en la conversión del puerto
-    }
-    return true;
-}
-
-int main(int argc, char* argv[]){
-    /*
-    if (argc != 2) {
-        std::cerr << "Uso: " << argv[0] << " ip:puerto\n";
+int main(int argc, char* argv[]) {
+    if (argc < 4) {
+        std::cerr << "Uso: " << argv[0] << " server_ip:puerto cliente_ip:puerto \"ruta con espacios\"\n";
         return 1;
     }
-    string server_ip;
-    int port;
-
-    if (!parseIpPort(argv[1], server_ip, port)) {
-        std::cerr << "Formato inválido. Use ip:puerto\n";
-        return 1;
-    }
-    */
 
     ip_port info_server;
     ip_port info_cliente;
-    info_server.ip = "127.0.0.1";
-    info_server.port = 8080;
-    info_cliente.ip = "127.0.0.5";
-    info_cliente.port = 8084;
-   
-     start(info_cliente,info_server);
+
+    if (!parseIpPort(argv[1], info_server)) {
+        cerr << "Formato inválido para server_ip:puerto. Use ip:puerto\n";
+        return 1;
+    }
+
+    if (!parseIpPort(argv[2], info_cliente)) {
+        cerr << "Formato inválido para cliente_ip:puerto. Use ip:puerto\n";
+        return 1;
+    }
+
+    // Concatenar todos los argumentos restantes en una única cadena para la ruta
+    string ruta;
+    for (int i = 3; i < argc; ++i) {
+        if (i > 3) ruta += " "; // Añade espacio entre palabras de la ruta
+        ruta += argv[i];
+    }
+
+    std::cout << "Server IP: " << info_server.ip << ", Puerto: " << info_server.port << "\n";
+    std::cout << "Cliente IP: " << info_cliente.ip << ", Puerto: " << info_cliente.port << "\n";
+    std::cout << "Ruta: " << ruta << "\n";
+
+    start(info_cliente, info_server, ruta);
 
     return 0;
 }
+//server  - 127.0.0.1:8080
+//cliente - 127.0.0.2:8082
+//ruta    - /home/santy/Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_1
+// ./cliente 127.0.0.1:8080 127.0.0.2:8082 /home/santy/Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_1
+// ./cliente 127.0.0.1:8080 127.0.0.2:8083 /home/santy/Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_3
+
+
+/*
+    - TO DO LIST
+        - Buscar archivo
+        - Seleccionar el archivo a enviar
+        - Comunicar cliente con cliente
+        - Dividir el archivo en secciones
+        - Enviar partes de archivo
+        - Unir pedazis ee archivos
+
+*/
