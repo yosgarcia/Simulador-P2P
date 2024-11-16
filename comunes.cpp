@@ -15,6 +15,41 @@ bool parseIpPort(const std::string& str, ip_port& result) {
     return true;
 }
 
+// Eliminar espacios en blanco de la izquierda
+std::string ltrim(const std::string& str) {
+    std::string s = str;
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }));
+    return s;
+}
+// Eliminar espacios en blanco de la derecha
+std::string rtrim(const std::string& str) {
+    std::string s = str;
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), s.end());
+    return s;
+}
+
+// Eliminar espacios en blanco de ambos lados
+std::string trim(const std::string& str) {
+    return ltrim(rtrim(str));
+}
+
+std::string getFirstTokenIstring(std::istringstream &stream) {
+    std::string value;
+    stream >> value;  
+
+    std::string remaining;
+    getline(stream, remaining);  // Leer el resto del flujo después del primer token
+
+    // Actualizar el contenido del flujo original con el resto
+    stream.str(remaining);  // Asignar el nuevo contenido
+    stream.clear();          // Reiniciar el estado del flujo para nueva lectura
+
+    return value;
+}
 
 bool sendIntThroughRed(int sock, int value){
     //Enviar valor
@@ -86,6 +121,36 @@ bool receiveStringThroughRed(int sock, std::string &value){
     return true;
 }
 
+bool sendFileInfoThroughRed(int sock, FileInfo fileInfo){
+    std::ostringstream dataStream;
+    dataStream << fileInfo.hash1 << " " << fileInfo.hash2 << " " << fileInfo.size << "\n";
+    std::string data = dataStream.str();
+
+    if (!sendStringThroughRed(sock, data)){
+        std::cerr << "Error al enviar por red el archivo  con hash" << fileInfo.hash1<< std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+bool receiveFileInfoThroughRed(int sock, FileInfo &fileInfo){
+    std::string file_data;
+    if (!receiveStringThroughRed(sock,file_data)){
+        std::cerr << "Error recibiendo informacion de un archivo\n";
+        return false;
+    }
+
+    // Procesar datos
+    std::istringstream dataStream(file_data);
+    long long hash1, hash2;
+    size_t size;
+        
+    dataStream >> hash1 >> hash2 >> size;
+    fileInfo = FileInfo (hash1,hash2, size);
+    return true;
+}
+
 bool sendFileInfoWithNameThroughRed(int sock, FileInfo fileInfo, std::string fileName){
     std::ostringstream dataStream;
     dataStream << fileInfo.hash1 << " " << fileInfo.hash2 << " " << fileInfo.size << " " << fileName << "\n";
@@ -119,4 +184,34 @@ bool receiveFileInfoWithNameThroughRed(int sock, FileInfo &fileInfo, std::string
 
     fileInfo = FileInfo (hash1,hash2, size);
     return true;
+}
+
+bool receiveIpThroughRed(int sock,ip_port &ip){
+    std::string ip_string;
+    if (!receiveStringThroughRed(sock, ip_string)){
+        std::cerr << "Error recibiendo la ip\n";
+        return false;
+    }
+    int port;
+    if (!receiveIntThroughRed(sock,port)){
+        std:: cerr << "Error recibiendo el puerto\n";
+        return false;
+    }
+    ip.ip = ip_string;
+    ip.port = port;
+    return true;
+}
+
+bool sendIpThroughRed(int sock, ip_port ip){
+    std::string ip_string = ip.ip;
+    if (!sendStringThroughRed(sock,ip_string)){
+        std::cerr << "Error enviando la ip " << ip.ip << std::endl;
+        return false;
+    }
+    if (!sendIntThroughRed(sock,ip.port)){
+        std::cerr << "Error enviando la el puerto " << ip.port << std::endl;
+        return false;
+    }
+    return true;
+
 }

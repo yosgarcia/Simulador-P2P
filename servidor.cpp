@@ -29,18 +29,21 @@ typedef pair<FileInfo,ip_port> data_file;
 
 //  archivito, {{1033.1222.122, la direccion},{5555.x.x y la ip}}
 
-map<string, vector<data_file>> fileDatabase;
+map<string, set<FileInfo>> name_sfileinfo;
+map<FileInfo, vector<ip_port>> fileinfo_vip;
+
 int cant_servidores;
 mutex mutexito;
 
 
-vector<data_file> searchFileBySubstring(const string subString){
-    vector<data_file> results;
+vector<FileInfo> searchFileBySubstring(const string subString){
+    vector<FileInfo> results;
 
     // Recorrer cada entrada en la base de datos de archivos
-    for (const auto& [fileName, registers] : fileDatabase) {
-        if (fileName.find(subString) != string::npos) {  // Verifica si subcadena está en el nombre del archivo
-            //el file actual contiene el substring buscado
+    for (const auto& [fileName, registers] : name_sfileinfo) {
+        if (fileName.find(subString) != string::npos){
+            // Verifica si subcadena está en el nombre del archivo
+            // el file actual contiene el substring buscado
             for (const auto& data_file_interested : registers) {
                 results.push_back(data_file_interested);
             }
@@ -55,39 +58,7 @@ vector<data_file> searchFileBySubstring(const string subString){
 
 // Función start_server modificada para manejar una conexión específica
 void start_server(int client_socket, ip_port ip_port_client) {
-
-
-    // -----------------------------------------------
-    /*
-    char buffer[1024];
-    int bytes_read = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-    
-    if (bytes_read <= 0) {
-        cerr << "Error al recibir datos del cliente" << endl;
-        close(client_socket);
-        return;
-    }
-    buffer[bytes_read] = '\0';
-
-    string command = buffer;
-    if(command.rfind("FIND ", 0) == 0){
-        string substring = command.substr(7);
-        auto results = searchFileBySubstring(substring);
-        stringstream respuesta;
-        respuesta << "Resultados de búsqueda para '" << substring << "':\n";
-        for (const auto& [fileName, fileInfo, clientInfo] : substring) {
-            respuesta << "  - Archivo: " << fileName << "\n";
-            respuesta << "    - Tamaño: " << fileInfo.size << " bytes\n";
-            respuesta << "    - Hash1: " << fileInfo.hash1 << "\n";
-            respuesta << "    - Hash2: " << fileInfo.hash2 << "\n";
-            respuesta << "    - Ubicación: IP " << clientInfo.ip << ", Puerto: " << clientInfo.port << "\n";
-        }
-
-        // Enviar la respuesta al cliente
-        send(client_socket, respuesta.str().c_str(), respuesta.str().length(), 0);
-    }
-*/
-    // -----------------------------------------------
+    //Recibir cantida de archivos iniciales por cliente
 
     int cant_archivos;
     if (!receiveIntThroughRed(client_socket,cant_archivos)){
@@ -96,8 +67,6 @@ void start_server(int client_socket, ip_port ip_port_client) {
         return;
     }
 
-    std::cout << "Número de archivos recibidos: " << cant_archivos << std::endl;
-    
     std::map<FileInfo, std::string> local;
 
     // Recibir datos de cada archivo
@@ -117,36 +86,110 @@ void start_server(int client_socket, ip_port ip_port_client) {
 
     mutexito.lock();
     for (const auto& [fileInfo, fileName] : local) {
-        data_file data = {fileInfo, ip_port_client};
-        fileDatabase[fileName].push_back(data);
+        name_sfileinfo[fileName].insert(fileInfo);
+        fileinfo_vip[fileInfo].push_back(ip_port_client);
     }
     mutexito.unlock();
 
     while (true){
-        //Leer nombre del string consultado
-        string file_name;
-        if (!receiveStringThroughRed(client_socket,file_name)){
-            cerr << "Error recibiendo el nombre del archivo por red\n";
-            break;
+        cout << "Esperando instruccion\n";
+        //Recibir instruccion
+        string instr;
+        if (!receiveStringThroughRed(client_socket,instr)){
+            cerr << "Error recibiendo el string de instruccion\n";
+            break;;
         }
 
-        mutexito.lock();
+        if (instr == "request"){
+            cout << "Estoy en request\n";
+            //Recibir S H H del cliente
+            FileInfo info_selected;
+            if (!receiveFileInfoThroughRed(client_socket,info_selected)){
+                cerr << "Error recibiendo el S H H escogido";
+                break;
+            }
+            info_selected.display();
 
-        cout << "Buscando archivo con substring: " << file_name << endl;
-        vector<data_file> data = searchFileBySubstring(file_name);
-        cout << data.size() << endl;
+            //Buscar cantidad ips que tienen ese archivo y no es el mismo cliente
+            mutexito.lock();
+            vector<ip_port> ips;
+            for (auto &cur_ip: fileinfo_vip[info_selected]){
+                if (cur_ip.ip == ip_port_client.ip && cur_ip.port == ip_port_client.port){
+                    continue;
+                }
+                ips.push_back(cur_ip);
+            }
+            mutexito.unlock();
 
-        mutexito.unlock();
-        cout << "fin\n";
-        /*
-        int number_files_to_choose = data.size();
-        if (!sendIntThroughRed(client_socket,number_files_to_choose)){
-            cerr << "Error al enviar la cantidad de archivos a escoger que tienen el substring: " << file_name << endl;
-            break;
+            int num_ips = ips.size();
+
+            if (!sendIntThroughRed(client_socket,num_ips)){
+                cerr << "Error enviando num_ips: " << num_ips << endl;
+                break;
+            }
+            if (num_ips == 0){
+                continue;
+            }
+            //Enviar ips
+            for (auto &cur_ip: ips){
+                if (!sendIpThroughRed(client_socket,cur_ip)){
+                    cerr << "Error enviando la ip " << cur_ip.ip << endl;
+                    break;
+                }
+            }
+            // Ver si el servidor logro finalizar o no (todos los clientes borraron el archivo)
+            int success;
+            if (!receiveIntThroughRed(client_socket,success)){
+                cerr << "Error recibiendo si el cliente tuvo exito con el archivo\n";
+                return;
+            } 
+            if (!success) continue;
+            string new_file_str;
+            if (!receiveStringThroughRed(client_socket,new_file_str)){
+                cerr << "Error recibiendo el nombre del nuevo archivo\n";
+                break;
+            }
+            //save the file
+            mutexito.lock();
+            name_sfileinfo[new_file_str].insert(info_selected);
+            fileinfo_vip[info_selected].push_back(ip_port_client);
+            mutexito.unlock();
+
+            cout << "Archivo:<" << new_file_str << ">guardado\n";
         }
-    */
-  
+        else if (instr == "find"){
+            //Recibir nombre del substring
+            string file_name;
+            if (!receiveStringThroughRed(client_socket, file_name)){
+                cerr << "Error recibiendo el nombre del archivo por red\n";
+                break;
+            }
 
+            //Buscar archivos que contienen el substring
+            mutexito.lock();
+            vector<FileInfo> data = searchFileBySubstring(file_name);
+            mutexito.unlock();
+
+
+            //Enviar numero de archivos
+            if (!sendIntThroughRed(client_socket,data.size())){
+                cerr << "Error enviando la cantidad de archivos con el substring buscado\n";
+                break;
+            }
+            
+            //Enviar cada archivo
+            for (int i=0; i<data.size(); i++){
+                FileInfo cur_data = data[i];
+                if (!sendFileInfoThroughRed(client_socket,cur_data)){
+                    cerr << "Error enviando S H H de un archivo al cliente\n";
+                    break;
+                }
+            }
+        } else if (instr=="wq;"){
+            break;
+        } else {
+            cout << "Instruccion recibida incorrecta\n";
+        }
     }
 
     close(client_socket);
@@ -230,3 +273,4 @@ int main(int argc, char* argv[]){
 
 // g++ comunes.cpp servidor.cpp -o servidor
 // ./servidor 127.0.0.1:8080
+//request 4261194 399067255 45019805

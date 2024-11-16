@@ -7,6 +7,9 @@
 #include <arpa/inet.h> // Para htonl y funciones de red
 #include <sys/socket.h> // Para send
 #include <sstream> // Para ostringstream
+#include <cctype>
+#include <algorithm>
+
 
 typedef struct ip_port{
     std::string ip;
@@ -33,15 +36,24 @@ public:
     bool operator<(const FileInfo& other) const {
         return std::tie(hash1, hash2, size) < std::tie(other.hash1, other.hash2, other.size);
     }
+    bool operator==(const FileInfo& other) const {
+        return std::tie(hash1, hash2, size) == std::tie(other.hash1, other.hash2, other.size);
+    }
 };
 bool parseIpPort(const std::string& str, ip_port& result);
-
+std::string getFirstTokenIstring(std::istringstream &stream);
+std::string ltrim(const std::string& str);
+std::string rtrim(const std::string& str);
+std::string trim(const std::string& str);
 bool sendIntThroughRed(int sock, int value);
 bool receiveIntThroughRed(int sock, int& value);
 bool sendStringThroughRed(int sock, std::string value);
 bool receiveStringThroughRed(int sock, std::string &value);
-bool sendFileInfoThroughRed();
+bool sendFileInfoThroughRed(int sock, FileInfo fileInfo);
+bool receiveFileInfoThroughRed(int sock, FileInfo &fileInfo);
 bool sendFileInfoWithNameThroughRed(int sock, FileInfo fileInfo, std::string fileName);
 bool receiveFileInfoWithNameThroughRed(int sock, FileInfo &fileInfo, std::string &fileName);
+bool receiveIpThroughRed(int sock, ip_port &ip);
+bool sendIpThroughRed(int sock, ip_port ip);
 
 #endif
