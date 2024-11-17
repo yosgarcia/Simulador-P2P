@@ -2,6 +2,13 @@
 #include "comunes.hpp"
 
 
+std::string ip_port_to_str(ip_port info){
+    std::string ans = info.ip;
+    ans+=":";
+    ans+=std::to_string(info.port);
+    return ans;
+
+}
 bool parseIpPort(const std::string& str, ip_port& result) {
     size_t colonPos = str.find(':');
     if (colonPos == std::string::npos) return false;
@@ -50,6 +57,38 @@ std::string getFirstTokenIstring(std::istringstream &stream) {
 
     return value;
 }
+
+bool sendCharThroughRed(int sock, char value) {
+    // Enviar valor
+    if (send(sock, &value, sizeof(value), 0) == -1) {
+        std::cerr << "Error al enviar el char: " << value << std::endl;
+        return false;
+    }
+
+    // Recibir confirmación
+    char confirmacion[3];
+    int confirmacion_recibida = recv(sock, confirmacion, sizeof(confirmacion), 0);
+    if (confirmacion_recibida <= 0) {
+        std::cerr << "Error recibiendo confirmación\n";
+        return false;
+    }
+
+    return true;
+}
+
+bool receiveCharThroughRed(int sock, char& value) {
+    // Recibir valor
+    int valread = recv(sock, &value, sizeof(value), 0);
+    if (valread <= 0) {
+        std::cerr << "Error al recibir char por red\n";
+        return false;
+    }
+
+    // Enviar confirmación
+    send(sock, "OK", 2, 0);
+    return true;
+}
+
 
 bool sendIntThroughRed(int sock, int value){
     //Enviar valor
@@ -214,4 +253,42 @@ bool sendIpThroughRed(int sock, ip_port ip){
     }
     return true;
 
+}
+
+bool sendBytesThroughRed(int sock, std::vector<char> &data) {
+    // Enviar la cantidad de bytes (en formato de red)
+    int size = data.size();
+    if (!sendIntThroughRed(sock, size)) {
+        std::cerr << "Error enviando el tamaño de los bytes\n";
+        return false;
+    }
+
+    for (int i=0; i<size; i++){
+        if (!sendCharThroughRed(sock,data[i])){
+            std::cerr << "Error enviando char\n";
+            return false;
+        }
+    }
+    return true;
+}
+
+
+ 
+bool receiveBytesThroughRed(int sock, std::vector<char> &buffer) {
+    // Recibir el tamaño de los bytes (en formato de red)
+    int data_size;
+    if (!receiveIntThroughRed(sock, data_size)) {
+        std::cerr << "Error recibiendo el tamaño de los bytes\n";
+        return false;
+    }
+    for (int i=0 ;i< data_size;i++){
+        char c;
+        if (!receiveCharThroughRed(sock,c)){
+            std::cerr << "Error recibiendo un byte\n";
+            return false;
+        }
+        buffer.push_back(c);
+    }
+
+    return true;
 }

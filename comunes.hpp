@@ -14,6 +14,22 @@
 typedef struct ip_port{
     std::string ip;
     int port;
+
+    // Sobrecargar el operador == para comparar ip y port
+    bool operator==(const ip_port& other) const {
+        return ip == other.ip && port == other.port;
+    }
+
+    // Sobrecargar el operador < para comparar ip y port
+    bool operator<(const ip_port& other) const {
+        // Primero comparamos las IPs
+        if (ip != other.ip) {
+            return ip < other.ip;  // Orden lexicográfico de las IPs
+        }
+        // Si las IPs son iguales, comparamos los puertos
+        return port < other.port;
+    }
+
 } ip_port;
 
 class FileInfo {
@@ -40,11 +56,15 @@ public:
         return std::tie(hash1, hash2, size) == std::tie(other.hash1, other.hash2, other.size);
     }
 };
+std::string ip_port_to_str(ip_port info);
 bool parseIpPort(const std::string& str, ip_port& result);
 std::string getFirstTokenIstring(std::istringstream &stream);
 std::string ltrim(const std::string& str);
 std::string rtrim(const std::string& str);
 std::string trim(const std::string& str);
+
+bool sendCharThroughRed(int sock, char value);
+bool receiveCharThroughRed(int sock, char& value);
 bool sendIntThroughRed(int sock, int value);
 bool receiveIntThroughRed(int sock, int& value);
 bool sendStringThroughRed(int sock, std::string value);
@@ -55,5 +75,7 @@ bool sendFileInfoWithNameThroughRed(int sock, FileInfo fileInfo, std::string fil
 bool receiveFileInfoWithNameThroughRed(int sock, FileInfo &fileInfo, std::string &fileName);
 bool receiveIpThroughRed(int sock, ip_port &ip);
 bool sendIpThroughRed(int sock, ip_port ip);
+bool sendBytesThroughRed(int sock, std::vector<char> &data);
+bool receiveBytesThroughRed(int sock, std::vector<char> &buffer);
 
 #endif

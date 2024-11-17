@@ -1,7 +1,6 @@
 #include <bits/stdc++.h>
 #include <thread>
 #include <mutex>
-
 #include <cstring>      // Para memset
 #include <arpa/inet.h>  // Para sockaddr_in y htons
 #include <unistd.h>  
@@ -30,14 +29,14 @@ typedef pair<FileInfo,ip_port> data_file;
 //  archivito, {{1033.1222.122, la direccion},{5555.x.x y la ip}}
 
 map<string, set<FileInfo>> name_sfileinfo;
-map<FileInfo, vector<ip_port>> fileinfo_vip;
+map<FileInfo, set<ip_port>> fileinfo_sip;
 
 int cant_servidores;
 mutex mutexito;
 
 
-vector<FileInfo> searchFileBySubstring(const string subString){
-    vector<FileInfo> results;
+set<FileInfo> searchFileBySubstring(const string subString){
+    set<FileInfo> results;
 
     // Recorrer cada entrada en la base de datos de archivos
     for (const auto& [fileName, registers] : name_sfileinfo) {
@@ -45,7 +44,7 @@ vector<FileInfo> searchFileBySubstring(const string subString){
             // Verifica si subcadena está en el nombre del archivo
             // el file actual contiene el substring buscado
             for (const auto& data_file_interested : registers) {
-                results.push_back(data_file_interested);
+                results.insert(data_file_interested);
             }
         }
     }
@@ -57,7 +56,14 @@ vector<FileInfo> searchFileBySubstring(const string subString){
 
 
 // Función start_server modificada para manejar una conexión específica
-void start_server(int client_socket, ip_port ip_port_client) {
+void start_server(int client_socket) {
+    //obtener la ip_puerto reales?
+    ip_port ip_port_client;
+    if (!receiveIpThroughRed(client_socket,ip_port_client)){
+        cerr << "Error recibiendo la ip verdadera del cliente\n";
+        return;
+    }
+    cout << "Hablando con " << ip_port_to_str(ip_port_client) << endl;
     //Recibir cantida de archivos iniciales por cliente
 
     int cant_archivos;
@@ -87,7 +93,7 @@ void start_server(int client_socket, ip_port ip_port_client) {
     mutexito.lock();
     for (const auto& [fileInfo, fileName] : local) {
         name_sfileinfo[fileName].insert(fileInfo);
-        fileinfo_vip[fileInfo].push_back(ip_port_client);
+        fileinfo_sip[fileInfo].insert(ip_port_client);
     }
     mutexito.unlock();
 
@@ -113,7 +119,7 @@ void start_server(int client_socket, ip_port ip_port_client) {
             //Buscar cantidad ips que tienen ese archivo y no es el mismo cliente
             mutexito.lock();
             vector<ip_port> ips;
-            for (auto &cur_ip: fileinfo_vip[info_selected]){
+            for (auto &cur_ip: fileinfo_sip[info_selected]){
                 if (cur_ip.ip == ip_port_client.ip && cur_ip.port == ip_port_client.port){
                     continue;
                 }
@@ -137,25 +143,38 @@ void start_server(int client_socket, ip_port ip_port_client) {
                     break;
                 }
             }
+            string new_file_str;
             // Ver si el servidor logro finalizar o no (todos los clientes borraron el archivo)
             int success;
             if (!receiveIntThroughRed(client_socket,success)){
-                cerr << "Error recibiendo si el cliente tuvo exito con el archivo\n";
-                return;
-            } 
-            if (!success) continue;
-            string new_file_str;
+                cerr << "Error recibiendo si el cliente logro guardar el archivo\n";
+                break;
+            }
+            if (!success){
+                continue;
+            }
             if (!receiveStringThroughRed(client_socket,new_file_str)){
                 cerr << "Error recibiendo el nombre del nuevo archivo\n";
                 break;
             }
-            //save the file
+            //successful save
+            FileInfo n_fi;
+            if (!receiveFileInfoThroughRed(client_socket,n_fi)){
+                cerr << "Error recibiendo el file info que el cliente logro guardar\n";
+                break;
+            }
             mutexito.lock();
-            name_sfileinfo[new_file_str].insert(info_selected);
-            fileinfo_vip[info_selected].push_back(ip_port_client);
+            name_sfileinfo[new_file_str].insert(n_fi);
+            fileinfo_sip[n_fi].insert(ip_port_client);
             mutexito.unlock();
 
-            cout << "Archivo:<" << new_file_str << ">guardado\n";
+            //Indicar guardado en server
+            if (!sendIntThroughRed(client_socket,1)){
+                cerr << "Error indicando al cliente que el archivo fue guardado\n";
+                break;
+            }
+
+            cout << "Archivo: <" << new_file_str << "> guardado\n";
         }
         else if (instr == "find"){
             //Recibir nombre del substring
@@ -167,7 +186,7 @@ void start_server(int client_socket, ip_port ip_port_client) {
 
             //Buscar archivos que contienen el substring
             mutexito.lock();
-            vector<FileInfo> data = searchFileBySubstring(file_name);
+            set<FileInfo> data = searchFileBySubstring(file_name);
             mutexito.unlock();
 
 
@@ -178,8 +197,7 @@ void start_server(int client_socket, ip_port ip_port_client) {
             }
             
             //Enviar cada archivo
-            for (int i=0; i<data.size(); i++){
-                FileInfo cur_data = data[i];
+            for (auto &cur_data: data){
                 if (!sendFileInfoThroughRed(client_socket,cur_data)){
                     cerr << "Error enviando S H H de un archivo al cliente\n";
                     break;
@@ -242,13 +260,13 @@ void start(ip_port ip_server){
         inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
         int client_port = ntohs(client_address.sin_port);
 
-        cout << "Nueva conexión de " << client_ip << ":" << client_port << std::endl;
+        cout << "\nNueva conexión recibida supuestamente de aqui: " << client_ip << ":" << client_port << "\n\n";
 
         // Pasar IP y puerto del cliente a `start_server`
         ip_port client_info = {client_ip, client_port};
 
         // Crear un hilo para cada cliente usando `start_server`
-        std::thread client_thread(start_server, client_socket, client_info);
+        std::thread client_thread(start_server, client_socket);
         client_thread.detach();
     }
 

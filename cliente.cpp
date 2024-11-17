@@ -11,6 +11,7 @@ using namespace std;
 // Info y la direccion del archivo
 map<FileInfo,string> files;
 map<string,string> name_fullpath;
+string path_folder;
 mutex mutexito;
 
 pair<long long, long long> hashes(ifstream &file) {
@@ -56,11 +57,11 @@ long long hash_2(ifstream& file) {
 }
 
 
-size_t getFileSize(std::ifstream &file) {
+size_t getFileSize(ifstream &file) {
     streampos current_pos = file.tellg();
-    file.seekg(0, std::ios::end);
+    file.seekg(0, ios::end);
     streampos file_size = file.tellg();
-    file.seekg(current_pos, std::ios::beg);
+    file.seekg(current_pos, ios::beg);
     return static_cast<size_t>(file_size);  // Usando size_t
 }
 
@@ -74,7 +75,7 @@ void listFilesInDirectory(const string& directoryPath){
 
     for (const auto& entry : filesystem::directory_iterator(directoryPath)) {
         if (filesystem::is_regular_file(entry.status())) {
-            //std::cout << "Archivo: " << entry.path() << " (Tamaño: " << filesystem::file_size(entry.path()) << " bytes)\n";
+            //cout << "Archivo: " << entry.path() << " (Tamaño: " << filesystem::file_size(entry.path()) << " bytes)\n";
             ifstream file(entry.path());
             if (file.is_open()) {
                 pair<long long, long long> two_hash = hashes(file);
@@ -89,7 +90,7 @@ void listFilesInDirectory(const string& directoryPath){
             }
             else
             {
-                cerr << "No se pudo abrir el archivo: " << entry.path() << std::endl;
+                cerr << "No se pudo abrir el archivo: " << entry.path() << endl;
             }
         }
         else if (filesystem::is_directory(entry.status())) {
@@ -106,54 +107,140 @@ void print_files_saved(){
         cout << pair.second << "\n\n";
     }
 }
-int connect_servers(int &sock, ip_port myself, ip_port to_connect) {
-    const char* to_connect_ip = to_connect.ip.c_str();
-    int to_connect_port = to_connect.port;
 
-    const char* myself_ip = myself.ip.c_str();
-    int myself_port = myself.port;
 
-    struct sockaddr_in to_connect_addr, myself_addr;
-
-    // Crear el socket
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        cerr << "Error al crear el socket.\n";
-        return 0;
+// Utility function to create a connection to a server or client
+int connect_to(ip_port target) {
+    int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock_fd < 0) {
+        cerr << "Error creating socket for " << target.ip << ":" << target.port << "\n";
+        return -1;
     }
 
-    myself_addr.sin_family = AF_INET;
-    myself_addr.sin_addr.s_addr = inet_addr(myself_ip);
-    myself_addr.sin_port = htons(myself_port);
-    
-    if (bind(sock, (struct sockaddr*)&myself_addr, sizeof(myself_addr)) < 0) {
-        cerr << "Error al hacer bind en el cliente" << endl;
-        close(sock);
-        return 0;
+    struct sockaddr_in target_address;
+    target_address.sin_family = AF_INET;
+    target_address.sin_port = htons(target.port);
+    inet_pton(AF_INET, target.ip.c_str(), &target_address.sin_addr);
+
+    if (connect(sock_fd, (struct sockaddr*)&target_address, sizeof(target_address)) < 0) {
+        cerr << "Error connecting to " << target.ip << ":" << target.port << "\n";
+        close(sock_fd);
+        return -1;
     }
 
-    to_connect_addr.sin_family = AF_INET;
-    to_connect_addr.sin_port = htons(to_connect_port);
-    
-    if (inet_pton(AF_INET, to_connect_ip, &to_connect_addr.sin_addr) <= 0) {
-        cerr << "Dirección del servidor no válida" << endl;
-        close(sock);
-        return 0;
-    }
-
-    if (connect(sock, (struct sockaddr*)&to_connect_addr, sizeof(to_connect_addr)) < 0) {
-        cerr << "Error al conectar con el servidor" << endl;
-        close(sock);
-        return 0;
-    }
-    return 1;
+    cout << "Connected to " << target.ip << ":" << target.port << "\n";
+    return sock_fd;
 }
 
-void talkToClient(ip_port myself, ip_port new_client){
 
+void answerClient(int sock, ip_port sec_client_info){
+    FileInfo fileinfo;
+    string mensajito;
+
+    if (!receiveFileInfoThroughRed(sock, fileinfo)){
+        cerr << "Error recibiendo fileinfo\n";
+        return;
+    }
+    mutexito.lock();
+    string filename = files[fileinfo];
+    string filepath = name_fullpath[filename];
+    ifstream file(filepath); //solo lectura
+    mutexito.unlock();
+    if (!file){
+        //Comunicar que no tengo el archivo
+        if (!sendIntThroughRed(sock,0)){
+            cerr << "Error comunicando que no tengo el archivo\n";
+            return;
+        }
+        close(sock);
+        return;
+    }
+    //Comunicar que si lo tengo
+    if (!sendIntThroughRed(sock,1)){
+        cerr << "Error comunicando que si tengo el archivo\n";
+        return;
+    }
+
+    int start, end;
+    if (!receiveIntThroughRed(sock, start)){
+        cerr << "Error recibiendo puntero a primera parte archivo\n";
+        return;
+    }
+    if (!receiveIntThroughRed(sock,end)){
+        cerr << "Error recibiendo puntero hacia segunda parte archivo\n";
+        return;
+    }
+    cout << "deberia enviar en estos rangos: " << start << " " << end << endl;
+
+    file.seekg(start, ios::beg);
+    
+    // Calcular cuántos bytes necesitamos leer
+    size_t bytes_to_read = end - start + 1;
+    vector<char> buffer(bytes_to_read);
+    file.read(buffer.data(), bytes_to_read);
+
+    if (file.fail()) {
+        cerr << "Error leyendo los bytes del archivo\n";
+        return;
+    }
+
+    // Enviar los bytes leídos al cliente
+    if (!sendBytesThroughRed(sock, buffer)) {
+        cerr << "Error enviando los bytes al cliente\n";
+        return;
+    }
+
+    close(sock);
+    return;
 }
+
+void talkToClient(int sock, int start, int end, vector<char> &myBytes){
+    cout << "voy a pedir  estos rangos: " << start << " " << end << endl;
+    if(!sendIntThroughRed(sock,start)){
+        cerr << "Error indicando la primera parte del archivo\n";
+        return;
+    }
+    if (!sendIntThroughRed(sock, end)){
+        cerr << "Error indicando la segunda parte del archivo\n";
+    }
+    if(!receiveBytesThroughRed(sock, myBytes)){
+        cerr << "Error recibiendo los bytes del archivo\n";
+    }
+    close (sock);
+    return;
+}
+
+
+void writeFile(const string& filename, const vector<vector<char>>& bytes_portions) {
+    string file_name_with_path = path_folder + "/" + filename;
+    // Abrir el archivo en modo binario para escribir los bytes
+    ofstream output_file(file_name_with_path, std::ios::binary);
+    
+    if (!output_file) {
+        cerr << "Error al abrir el archivo para escritura." << endl;
+        return;
+    }
+
+    // Escribir todas las porciones de bytes en el archivo, en el orden
+    for (const auto& portion : bytes_portions) {
+        output_file.write(portion.data(), portion.size()); // Escribir la porción de bytes
+    }
+
+    output_file.close(); // Cerrar el archivo después de escribir
+    if (output_file) {
+        cout << "Archivo escrito con éxito." << endl;
+    } else {
+        cerr << "Error al escribir el archivo." << endl;
+    }
+}
+
 
 void talkToServer(int sock, ip_port info_cliente) {
+    if (!sendIpThroughRed(sock,info_cliente)){
+        cout << "Error enviando la ip al server\n";
+        return;
+    }
+    cout << ip_port_to_str(info_cliente) << " enviada al servidor\n";
 
     int cant_archivos = files.size();
     // Convertir el número a network byte order y enviarlo al servidor
@@ -212,7 +299,6 @@ void talkToServer(int sock, ip_port info_cliente) {
             string new_file_name;
             cout << "Introduzca el nombre del nuevo archivo.\n";
             getline(cin,new_file_name);
-            cout << "El nombre del nuevo archivo sera:<" << new_file_name << ">\n";
 
             //recibir ips
             vector<ip_port> ips;
@@ -229,12 +315,14 @@ void talkToServer(int sock, ip_port info_cliente) {
 
             for (auto &cur_ip:ips){
                 cout << "generaria conexion con " << cur_ip.ip << ':' << cur_ip.port << endl;
-                int n_sock;
-                if (connect_servers(n_sock, info_cliente, cur_ip)){
-                    cerr << "Error conectando con el cliente " << cur_ip.ip << endl;
+                int n_sock = connect_to(cur_ip);
+                if (n_sock<0){
+                    cerr << "Error al establecer la conexion\n";
                     break;
                 }
-                //preguntarle a este servidor si realmente tiene el archivo con ese s s h
+                //conexion valida
+
+                //preguntarle a este cliente si realmente tiene el archivo con ese s h h
                 if (!sendFileInfoThroughRed(n_sock, sel_fi)){
                     cerr << "Error enviando file info\n";
                     break;
@@ -252,26 +340,83 @@ void talkToServer(int sock, ip_port info_cliente) {
                     close(n_sock);
                 }
             }
+            int num_useful_clients = sockets.size();
+            if (num_useful_clients == 0){
+                //decir que no logro guardar el archivo
+                if (!sendIntThroughRed(sock,0)){
+                    cerr <<" Error indicando que no puede guardar el archivo\n";
+                    break;
+                }
+                continue;
+            }
+            // 4 clientes lo tengan , y el archivo sea 2 bytes
+            // 0 1 2 3 (el 2 y el 3 sobran, hay que cerrar esos sockets)
+            bool more_clients_than_size = false;
+            if (num_useful_clients > sel_size){
+                //hay clientes que no hacen falta
+                num_useful_clients = sel_size;
+                // cerrar socket 2 y 3
+                for (int i = sel_size; i < sockets.size(); i++){
+                    close(sockets[i]);
+                }
 
-            //decir que no logro guardar el archivo
-            if (!sendIntThroughRed(sock,0)){
-                cerr <<" xd\n";
+            }
+            // 11 bytes, 3 clientes
+            // portion = 3
+            // i=0 0 - 2 = 3
+            // i=1 3 - 5 = 3
+            // i=2 6 - 10 = 5
+            vector<vector<char>> bytes_portions (num_useful_clients, vector<char> ());
+
+            int portion_per_client = sel_size/num_useful_clients;
+            int remainder = sel_size % num_useful_clients;
+            for (int i =0; i < num_useful_clients; i++){
+                int start = i * portion_per_client;
+                int end = start + portion_per_client - 1;
+
+                if (i == num_useful_clients - 1) end += remainder;
+
+                int sockito = sockets[i];
+                vthreads.push_back(thread(talkToClient, sockito,start,end, ref(bytes_portions[i])));
+            }
+
+            //esperar a que todos los hilos reciban su parte
+            for (auto &t: vthreads){
+                if (t.joinable()) {  // Verificar si el hilo es "unido"
+                    t.join();         // Esperar a que termine
+                }
+            }
+
+            writeFile(new_file_name, bytes_portions);
+
+            mutexito.lock();
+            files[sel_fi] = new_file_name;
+            name_fullpath[new_file_name] = path_folder + "/" + new_file_name;
+            mutexito.unlock();
+
+            // Avisar al server que tengo este nuevo archivo
+            if (!sendIntThroughRed(sock,1)){
+                cerr <<" Error avisando al server que ya tengo el archivo nuevo\n";
                 break;
             }
-            
-            /* Procesos para recibir ips que tienen el archivo*/
+            // Enviar el nombre del nuevo archivo
+            if (!sendStringThroughRed(sock,new_file_name)){
+                cerr << " Error enviando el nombre de archivo" << new_file_name << endl;
+                break;
+            }
 
-            //- C1 open conection with c2,c3.. clients
-            //- c2,c3,c4 clients receives connection
-            //- Ask c2,c3,c4 if they have the file
-            //- c2,c3,c4 tells c1 if the have it or dont
-            //- then for each that have, c1 says from what byte to other byte to receive
-            //- c2,c3,c4 receveis it, sends it in chunks of 1024 bytes
-            //- c1 receives all of the bytes
-            //- c1 appends them
-            //- c1 writes new file
-            //- c1 adds it in his local memory
-            //- c1 tells server he has that file now
+            // Avisar al server que tengo este nuevo archivo
+            if(!sendFileInfoThroughRed(sock, sel_fi)){
+                cerr << "Error enviando al server la info del archivo nuevo\n";
+                break;
+            }
+
+            //Esperar a que el server se actualize
+            int saved_on_sever;
+            if (!receiveIntThroughRed(sock, saved_on_sever)){
+                cerr << "Error recibiendo la confirmacion de guardado en el server\n";
+                break;
+            }
             
         }
         else if(instr == "find"){
@@ -322,7 +467,7 @@ void talkToServer(int sock, ip_port info_cliente) {
             for (int i = 0; i < num_files_found; i++) {
                 FileInfo fileInfoReceived;
                 if (!receiveFileInfoThroughRed(sock, fileInfoReceived)) {
-                    std::cerr << "Error al recibir el listado de archivos\n";
+                    cerr << "Error al recibir el listado de archivos\n";
                     continue;
                 }
 
@@ -341,202 +486,106 @@ void talkToServer(int sock, ip_port info_cliente) {
     close(sock);
 }
 
-void answerClient(int sock, ip_port sec_client_info){
-    FileInfo fileinfo;
-    if (!receiveFileInfoThroughRed(sock, fileinfo)){
-        cerr << "Error recibiendo fileinfo\n";
-        return;
-    }
-    mutexito.lock();
-    string filename = files[fileinfo];
-    string filepath = name_fullpath[filename];
-    ifstream file(filepath);
-    if (!file){
-        //Comunicar que no tengo el archivo
-        if (!sendIntThroughRed(sock,0)){
-            cerr << "Error comunicando que no tengo el archivo\n";
-            return;
-        }
-        close(sock);
-        return;
-    }
-    //Comunicar que si lo tengo
-    if (!sendIntThroughRed(sock,1)){
-        cerr << "Error comunicando que si tengo el archivo\n";
+
+
+// Function for the client to connect to the server and listen for other clients
+void start_client(ip_port server_info, ip_port client_info) {
+    string server_ip = server_info.ip;
+    int server_port = server_info.port;
+    string client_ip = client_info.ip;
+    int client_port = client_info.port;
+
+    // Create socket for connecting to the server
+    int client_fd; //file descriptor
+    if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        cerr << "Error al crear socket para el servidor\n";
         return;
     }
 
-    close(sock);
-    return;
-}
+    struct sockaddr_in server_address;
+    server_address.sin_family = AF_INET;
+    server_address.sin_port = htons(server_port);
+    inet_pton(AF_INET, server_ip.c_str(), &server_address.sin_addr);
 
-void listeningNewClients(ip_port info_cliente){
-    const char* client_ip = info_cliente.ip.c_str();
-    int client_port = info_cliente.port;
-
-    struct sockaddr_in serv_addr, client_addr;
-
-    // Crear el socket
-    int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_sock < 0) {
-        cerr << "Error al crear el socket.\n";
+    // Connect to the main server
+    if (connect(client_fd, (struct sockaddr*)&server_address, sizeof(server_address)) < 0) {
+        cerr << "Error al conectar con el servidor\n";
+        close(client_fd);
         return;
     }
 
-    // Configurar la dirección del servidor
-    client_addr.sin_family = AF_INET;
-    client_addr.sin_addr.s_addr = inet_addr(client_ip);
-    client_addr.sin_port = htons(client_port);
-    
-    // Asignar la IP y el puerto del cliente al socket
-    if (bind(listen_sock, (struct sockaddr*)&client_addr, sizeof(client_addr)) < 0) {
-        std::cerr << "Error al hacer bind en el cliente" << std::endl;
-        close(listen_sock);
-        return;
-    }
-    if (listen(listen_sock, 10) < 0) {
-        cerr << "Error al escuchar" << endl;
-        close(listen_sock);
-        return;
-    }
-    
-    cout << "Cliente escuchando en " << info_cliente.ip << ":" << info_cliente.port << "..." << endl;
+    cout << "Conectado al servidor principal en " << server_ip << ":" << server_port << endl;
 
-    while (true) {
-        int n_client_socket;
-        struct sockaddr_in n_client_address;
-        socklen_t n_client_addrlen = sizeof(n_client_address);
+    // Create a thread to communicate with the main server
+    thread server_thread(talkToServer,client_fd,client_info);
+    server_thread.detach();
 
-        // Aceptar una nueva conexión de cliente
-        if ((n_client_socket = accept(listen_sock, (struct sockaddr*)&n_client_address, &n_client_addrlen)) < 0) {
-            cerr << "Error al aceptar conexión" << endl;
-            continue;
-        }
-
-        // Obtener la dirección IP y puerto del cliente
-        char n_client_ip[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &n_client_address.sin_addr, n_client_ip, INET_ADDRSTRLEN);
-        int n_client_port = ntohs(n_client_address.sin_port);
-
-        cout << "Nueva conexión de " << n_client_ip << ":" << n_client_port << std::endl;
-
-        // Pasar IP y puerto del cliente a `start_server`
-        ip_port n_client_info = {n_client_ip, n_client_port};
-
-        // Crear un hilo para cada cliente usando `start_server`
-        thread client_thread(answerClient, n_client_socket, n_client_info);
-        client_thread.detach();
-    }
-}
-
-void start(ip_port ip_client, ip_port ip_server){
-    string ip = ip_client.ip;
-    int port = ip_client.port;
-    int cant_clientes = 2;
-    int sock_listen;
+    // Set up a listening socket for other clients
+    int server_fd;
     struct sockaddr_in address;
     int addrlen = sizeof(address);
 
-    // Crear el socket de escucha
-    if ((sock_listen = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        std::cerr << "Error al crear el socket" << std::endl;
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        cerr << "Error al crear el socket para clientes\n";
         return;
     }
 
-    // Configurar la dirección del socket
     address.sin_family = AF_INET;
-    address.sin_addr.s_addr = inet_addr(ip.c_str());
-    address.sin_port = htons(port);
-    if (bind(sock_listen, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        std::cerr << "Error al hacer bind" << std::endl;
-        close(sock_listen);
-        return;
-    }
-    if (listen(sock_listen, 10) < 0) {
-        std::cerr << "Error al escuchar" << std::endl;
-        close(sock_listen);
+    address.sin_addr.s_addr = inet_addr(client_ip.c_str());
+    address.sin_port = htons(client_port);
+
+    if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+        cerr << "Error al hacer bind para escuchar clientes\n";
+        close(server_fd);
         return;
     }
 
-    cout << "Cliente escuchando en " << ip << ":" << port << "..." << endl;
-
-    // Conexión al servidor
-    int server_socket;
-    struct sockaddr_in server_address;
-    
-    // Crear el socket para conectarse con el servidor
-    if ((server_socket = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        std::cerr << "Error al crear el socket para el servidor" << std::endl;
-        close(sock_listen);
+    if (listen(server_fd, 10) < 0) {
+        cerr << "Error al escuchar para conexiones de clientes\n";
+        close(server_fd);
         return;
     }
 
-    // Configurar la dirección del servidor
-    server_address.sin_family = AF_INET;
-    server_address.sin_port = htons(ip_server.port);
-    if (inet_pton(AF_INET, ip_server.ip.c_str(), &server_address.sin_addr) <= 0) {
-        std::cerr << "Dirección IP no válida o no soportada" << std::endl;
-        close(server_socket);
-        close(sock_listen);
-        return;
-    }
-
-    // Conectar al servidor
-    if (connect(server_socket, (struct sockaddr*)&server_address, sizeof(server_address)) < 0) {
-        std::cerr << "Error al conectar con el servidor" << std::endl;
-        close(server_socket);
-        close(sock_listen);
-        return;
-    }
-
-    cout << "Conectado al servidor " << ip_server.ip << ":" << ip_server.port << endl;
-
-    // Crear un hilo para manejar la comunicación con el servidor
-    thread server_thread(talkToServer, server_socket, ip_client);
-    server_thread.detach();
+    cout << "Esperando conexiones de otros clientes en " << client_ip << ":" << client_port << "...\n";
 
     while (true) {
-        int client_socket;
+        int new_socket;
         struct sockaddr_in client_address;
         socklen_t client_addrlen = sizeof(client_address);
 
-        // Aceptar una nueva conexión de cliente
-        if ((client_socket = accept(sock_listen, (struct sockaddr*)&client_address, &client_addrlen)) < 0) {
-            std::cerr << "Error al aceptar conexión" << std::endl;
+        if ((new_socket = accept(server_fd, (struct sockaddr*)&client_address, &client_addrlen)) < 0) {
+            cerr << "Error al aceptar conexión de otro cliente\n";
             continue;
         }
 
-        // Obtener la dirección IP y puerto del cliente
         char client_ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
         int client_port = ntohs(client_address.sin_port);
 
-        cout << "Nueva conexión de " << client_ip << ":" << client_port << std::endl;
+        cout << "Nueva conexión de cliente: " << client_ip << ":" << client_port << endl;
 
-        // Pasar IP y puerto del cliente a `start_server`
-        ip_port client_info = {client_ip, client_port};
-
-        // Crear un hilo para cada cliente usando `start_server`
-        std::thread client_thread(answerClient, client_socket, client_info);
+        // Create a thread to handle this client
+        thread client_thread(answerClient, new_socket, client_info);
         client_thread.detach();
     }
 
-    // Cerrar el socket de escucha cuando se termina
-    close(sock_listen);
+    // Close the listening socket when done
+    close(server_fd);
 }
-void start( ip_port client_info, ip_port server_info, string ruta ){
+
+void start( ip_port client_info, ip_port server_info ){
     files = map<FileInfo,string> ();
-    listFilesInDirectory(ruta);
+    listFilesInDirectory(path_folder);
     print_files_saved();
 
     // Crear un hilo para conectar al servidor
-    start(client_info, server_info);
+    start_client(server_info, client_info);
 }
 
 
 int main(int argc, char* argv[]) {
     if (argc < 4) {
-        std::cerr << "Uso: " << argv[0] << " server_ip:puerto cliente_ip:puerto \"ruta con espacios\"\n";
+        cerr << "Uso: " << argv[0] << " server_ip:puerto cliente_ip:puerto \"ruta con espacios\"\n";
         return 1;
     }
 
@@ -554,17 +603,17 @@ int main(int argc, char* argv[]) {
     }
 
     // Concatenar todos los argumentos restantes en una única cadena para la ruta
-    string ruta;
+    path_folder = "";
     for (int i = 3; i < argc; ++i) {
-        if (i > 3) ruta += " "; // Añade espacio entre palabras de la ruta
-        ruta += argv[i];
+        if (i > 3) path_folder += " "; // Añade espacio entre palabras de la ruta
+        path_folder += argv[i];
     }
 
-    std::cout << "Server IP: " << info_server.ip << ", Puerto: " << info_server.port << "\n";
-    std::cout << "Cliente IP: " << info_cliente.ip << ", Puerto: " << info_cliente.port << "\n";
-    std::cout << "Ruta: " << ruta << "\n";
+    cout << "Server IP: " << info_server.ip << ", Puerto: " << info_server.port << "\n";
+    cout << "Cliente IP: " << info_cliente.ip << ", Puerto: " << info_cliente.port << "\n";
+    cout << "Ruta: " << path_folder << "\n";
 
-    start(info_cliente, info_server, ruta);
+    start(info_cliente, info_server);
 
     return 0;
 }
