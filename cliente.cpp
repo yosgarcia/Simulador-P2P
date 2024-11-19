@@ -39,23 +39,6 @@ pair<long long, long long> hashes(ifstream &file) {
 }
 
 
-long long hash_2(ifstream& file) {
-    const long long prime1 = 1234567891; // Un primo grande
-    const long long prime2 = 987654319; // Otro primo grande
-    const long long mod = 1e9 + 21;     // Módulo grande para evitar colisiones
-
-    long long hash_value = 0;
-    long long power = 1;
-
-    char byte;
-    while (file.get(byte)) {
-        // Aplicamos una combinación de multiplicación y desplazamiento
-        hash_value = (hash_value + byte * power) % mod;
-        power = (power * prime1) % mod; // Incrementamos la potencia del primo
-    }
-    return hash_value;
-}
-
 
 size_t getFileSize(ifstream &file) {
     streampos current_pos = file.tellg();
@@ -63,6 +46,30 @@ size_t getFileSize(ifstream &file) {
     streampos file_size = file.tellg();
     file.seekg(current_pos, ios::beg);
     return static_cast<size_t>(file_size);  // Usando size_t
+}
+
+void printLine(){
+    cout << "__________________________________________________________________________________________\n";
+}
+
+void printHeadline(){
+    printf("Imprimiendo informacion de los archivos encontrados.\n");
+    printLine();
+    cout << setw(10) << right << "Size" << "   |   " << setw(15) << right << "Hash1" << "   |   "
+        << setw(15) << right << "Hash2" << "   |   " << setw(15) << right << "IP" << "   |   "
+        << setw(6) << right << "Port" << endl;
+    printLine();
+}
+
+void printDataReceived(pairfi_ip& data){
+    FileInfo filedata = data.first;
+    ip_port ipdata = data.second;
+
+    cout << setw(10) << right << filedata.size << "   |   "
+    << setw(15) << right << filedata.hash1 << "   |   "
+    << setw(15) << right << filedata.hash2 << "   |   "
+    << setw(15) << right << ipdata.ip << "   |   "
+    << setw(6) << right << ipdata.port << endl;
 }
 
 
@@ -109,7 +116,6 @@ void print_files_saved(){
 }
 
 
-// Utility function to create a connection to a server or client
 int connect_to(ip_port target) {
     int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (sock_fd < 0) {
@@ -128,7 +134,7 @@ int connect_to(ip_port target) {
         return -1;
     }
 
-    cout << "Connected to " << target.ip << ":" << target.port << "\n";
+    //cout << "Connected to " << target.ip << ":" << target.port << "\n";
     return sock_fd;
 }
 
@@ -144,16 +150,18 @@ void answerClient(int sock, ip_port sec_client_info){
     mutexito.lock();
     string filename = files[fileinfo];
     string filepath = name_fullpath[filename];
-    ifstream file(filepath); //solo lectura
+    ifstream file(filepath, ios::binary); //solo lectura en binario
     mutexito.unlock();
+
+    //Comunicar que no tengo el archivo
     if (!file){
-        //Comunicar que no tengo el archivo
         if (!sendIntThroughRed(sock,0)){
             cerr << "Error comunicando que no tengo el archivo\n";
             return;
         }
         close(sock);
         return;
+    
     }
     //Comunicar que si lo tengo
     if (!sendIntThroughRed(sock,1)){
@@ -170,14 +178,16 @@ void answerClient(int sock, ip_port sec_client_info){
         cerr << "Error recibiendo puntero hacia segunda parte archivo\n";
         return;
     }
-    cout << "deberia enviar en estos rangos: " << start << " " << end << endl;
 
     file.seekg(start, ios::beg);
-    
+
     // Calcular cuántos bytes necesitamos leer
     size_t bytes_to_read = end - start + 1;
-    vector<char> buffer(bytes_to_read);
-    file.read(buffer.data(), bytes_to_read);
+    
+    string buffer;
+    buffer.resize(bytes_to_read);
+
+    file.read(&buffer[0], bytes_to_read);
 
     if (file.fail()) {
         cerr << "Error leyendo los bytes del archivo\n";
@@ -185,7 +195,7 @@ void answerClient(int sock, ip_port sec_client_info){
     }
 
     // Enviar los bytes leídos al cliente
-    if (!sendBytesThroughRed(sock, buffer)) {
+    if (!sendStringThroughRed(sock, buffer)) {
         cerr << "Error enviando los bytes al cliente\n";
         return;
     }
@@ -194,24 +204,28 @@ void answerClient(int sock, ip_port sec_client_info){
     return;
 }
 
-void talkToClient(int sock, int start, int end, vector<char> &myBytes){
-    cout << "voy a pedir  estos rangos: " << start << " " << end << endl;
+void talkToClient(int sock, int start, int end, string &myBytes){
     if(!sendIntThroughRed(sock,start)){
         cerr << "Error indicando la primera parte del archivo\n";
+        close(sock);
         return;
     }
     if (!sendIntThroughRed(sock, end)){
         cerr << "Error indicando la segunda parte del archivo\n";
+        close(sock);
+        return;
     }
-    if(!receiveBytesThroughRed(sock, myBytes)){
+    if(!receiveStringThroughRed(sock, myBytes)){
         cerr << "Error recibiendo los bytes del archivo\n";
+        close(sock);
+        return;
     }
     close (sock);
     return;
 }
 
 
-void writeFile(const string& filename, const vector<vector<char>>& bytes_portions) {
+void writeFile(const string& filename, const vector<string>& bytes_portions) {
     string file_name_with_path = path_folder + "/" + filename;
     // Abrir el archivo en modo binario para escribir los bytes
     ofstream output_file(file_name_with_path, std::ios::binary);
@@ -223,7 +237,7 @@ void writeFile(const string& filename, const vector<vector<char>>& bytes_portion
 
     // Escribir todas las porciones de bytes en el archivo, en el orden
     for (const auto& portion : bytes_portions) {
-        output_file.write(portion.data(), portion.size()); // Escribir la porción de bytes
+        output_file.write(portion.data(), portion.size()); 
     }
 
     output_file.close(); // Cerrar el archivo después de escribir
@@ -240,7 +254,6 @@ void talkToServer(int sock, ip_port info_cliente) {
         cout << "Error enviando la ip al server\n";
         return;
     }
-    cout << ip_port_to_str(info_cliente) << " enviada al servidor\n";
 
     int cant_archivos = files.size();
     // Convertir el número a network byte order y enviarlo al servidor
@@ -314,7 +327,7 @@ void talkToServer(int sock, ip_port info_cliente) {
             vector<int> sockets;
 
             for (auto &cur_ip:ips){
-                cout << "generaria conexion con " << cur_ip.ip << ':' << cur_ip.port << endl;
+                //cout << "generaria conexion con " << cur_ip.ip << ':' << cur_ip.port << endl;
                 int n_sock = connect_to(cur_ip);
                 if (n_sock<0){
                     cerr << "Error al establecer la conexion\n";
@@ -333,7 +346,6 @@ void talkToServer(int sock, ip_port info_cliente) {
                     break;
                 }
                 if (hasit){
-                    cout << "lo tiene yei\n";
                     sockets.push_back(n_sock);
                 }
                 else{
@@ -342,7 +354,7 @@ void talkToServer(int sock, ip_port info_cliente) {
             }
             int num_useful_clients = sockets.size();
             if (num_useful_clients == 0){
-                //decir que no logro guardar el archivo
+                cout << "No hay clientes actuales con ese archivo\n";
                 if (!sendIntThroughRed(sock,0)){
                     cerr <<" Error indicando que no puede guardar el archivo\n";
                     break;
@@ -366,25 +378,30 @@ void talkToServer(int sock, ip_port info_cliente) {
             // i=0 0 - 2 = 3
             // i=1 3 - 5 = 3
             // i=2 6 - 10 = 5
-            vector<vector<char>> bytes_portions (num_useful_clients, vector<char> ());
 
-            int portion_per_client = sel_size/num_useful_clients;
-            int remainder = sel_size % num_useful_clients;
-            for (int i =0; i < num_useful_clients; i++){
-                int start = i * portion_per_client;
-                int end = start + portion_per_client - 1;
+            vector<string> bytes_portions (num_useful_clients, string ());
+            if (sel_size > 0){
+                int portion_per_client = sel_size/num_useful_clients;
+                int remainder = sel_size % num_useful_clients;
+                for (int i =0; i < num_useful_clients; i++){
+                    int start = i * portion_per_client;
+                    int end = start + portion_per_client - 1;
 
-                if (i == num_useful_clients - 1) end += remainder;
+                    if (i == num_useful_clients - 1) end += remainder;
 
-                int sockito = sockets[i];
-                vthreads.push_back(thread(talkToClient, sockito,start,end, ref(bytes_portions[i])));
-            }
-
-            //esperar a que todos los hilos reciban su parte
-            for (auto &t: vthreads){
-                if (t.joinable()) {  // Verificar si el hilo es "unido"
-                    t.join();         // Esperar a que termine
+                    int sockito = sockets[i];
+                    vthreads.push_back(thread(talkToClient, sockito,start,end, ref(bytes_portions[i])));
                 }
+
+                //esperar a que todos los hilos reciban su parte
+                for (auto &t: vthreads){
+                    if (t.joinable()) {  // Verificar si el hilo es "unido"
+                        t.join();         // Esperar a que termine
+                    }
+                }
+            }
+            else{
+                bytes_portions = {""};
             }
 
             writeFile(new_file_name, bytes_portions);
@@ -421,7 +438,6 @@ void talkToServer(int sock, ip_port info_cliente) {
         }
         else if(instr == "find"){
             //Enviar instruccion
-            cout << "Enviando instruccion: " << instr << endl;
 
             if(!sendStringThroughRed(sock, instr)){
                 cerr << "Error enviando el string "<< instr << " al servidor\n";
@@ -431,13 +447,10 @@ void talkToServer(int sock, ip_port info_cliente) {
             //Recibir el nombre del substring seleccionado
             string sel_file = trim(inp_stream.str());
 
-            cout <<"Enviado el string:<" << sel_file << ">\n";
             //Mandar el substring seleccionado
             if (!sendStringThroughRed(sock,sel_file)){
                 cerr << "Error enviando el string: " << sel_file << " al servidor\n";
             }
-
-            cout <<"Esperando cantidad de archivos\n";
 
             //Recibir la cantidad de archivos que contienen el substring
             int num_files_found;
@@ -446,36 +459,20 @@ void talkToServer(int sock, ip_port info_cliente) {
                 return;
             }
             if (num_files_found == 0){
-                cout << "No se encontraron archivos con ese nombre\n";
+                cout << "No se encontraron archivos con esos metadatos\n";
                 continue;
             }
-            cout << "num_files_found different from zero: " << num_files_found << endl;
 
-
-            //Recibir todos los FileInfo
-            
-            cout << "\n\nImprimiendo información de los archivos encontrados...\n";
-            cout << "------------------------------------------------------\n";
-            // Títulos de las columnas con alineación
-            cout << setw(10) << right << "Size" << "   |   "
-                    << setw(15) << right << "Hash1" << "   |   "
-                    << setw(15) << right << "Hash2" << endl;
-
-            // Línea de separación
-            cout << "------------------------------------------------------\n";
-
+            printHeadline();
             for (int i = 0; i < num_files_found; i++) {
-                FileInfo fileInfoReceived;
-                if (!receiveFileInfoThroughRed(sock, fileInfoReceived)) {
+                pairfi_ip data;
+                if (!receive_pairFi_Ip_ThroughRed(sock, data)) {
                     cerr << "Error al recibir el listado de archivos\n";
                     continue;
                 }
-
-                cout << setw(10) << right << fileInfoReceived.size << "   |   "
-                        << setw(15) << right << fileInfoReceived.hash1 << "   |   "
-                        << setw(15) << right << fileInfoReceived.hash2 << endl;
+                printDataReceived(data);
             }
-            cout << "______________________________________________________\n";
+            printLine();
 
         }
         else if (instr==";wq") break;
@@ -546,7 +543,7 @@ void start_client(ip_port server_info, ip_port client_info) {
         return;
     }
 
-    cout << "Esperando conexiones de otros clientes en " << client_ip << ":" << client_port << "...\n";
+    cout << "Esperando conexiones de otros clientes en " << client_ip << ":" << client_port << "...\n\n";
 
     while (true) {
         int new_socket;
@@ -576,9 +573,6 @@ void start_client(ip_port server_info, ip_port client_info) {
 void start( ip_port client_info, ip_port server_info ){
     files = map<FileInfo,string> ();
     listFilesInDirectory(path_folder);
-    print_files_saved();
-
-    // Crear un hilo para conectar al servidor
     start_client(server_info, client_info);
 }
 
@@ -611,7 +605,7 @@ int main(int argc, char* argv[]) {
 
     cout << "Server IP: " << info_server.ip << ", Puerto: " << info_server.port << "\n";
     cout << "Cliente IP: " << info_cliente.ip << ", Puerto: " << info_cliente.port << "\n";
-    cout << "Ruta: " << path_folder << "\n";
+    cout << "Ruta: " << path_folder << "\n\n";
 
     start(info_cliente, info_server);
 

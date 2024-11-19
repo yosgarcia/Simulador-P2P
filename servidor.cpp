@@ -1,32 +1,13 @@
 #include <bits/stdc++.h>
 #include <thread>
 #include <mutex>
-#include <cstring>      // Para memset
+#include <cstring>      
 #include <arpa/inet.h>  // Para sockaddr_in y htons
 #include <unistd.h>  
 #include "comunes.hpp"
 using namespace std;
 
 
-// tabla (marca, lista de conocido como)
-//class Tabla
-//      - Marca
-//      - List<strings, ip>
-// 
-
-typedef pair<FileInfo,ip_port> data_file;
-// hola.jpg (12,1,20) -> cliente 1
-// hola.jpg (11,1,25) -> cliente 2
-/*
-(12,1,20) -> archivitio en 1033.1222.112.
-            -> miarchivo en 1222.464.333.
-
-(21,1,33) -> archivitio en 5555.30393.112.
-            -> prube en 1222.777.333.               
-
-*/
-
-//  archivito, {{1033.1222.122, la direccion},{5555.x.x y la ip}}
 
 map<string, set<FileInfo>> name_sfileinfo;
 map<FileInfo, set<ip_port>> fileinfo_sip;
@@ -35,24 +16,22 @@ int cant_servidores;
 mutex mutexito;
 
 
-set<FileInfo> searchFileBySubstring(const string subString){
-    set<FileInfo> results;
+//file info y ip:puerto del cliente
+set<pairfi_ip> searchFileBySubstring(const string subString){
+    set<pairfi_ip> results;
 
-    // Recorrer cada entrada en la base de datos de archivos
     for (const auto& [fileName, registers] : name_sfileinfo) {
         if (fileName.find(subString) != string::npos){
-            // Verifica si subcadena está en el nombre del archivo
-            // el file actual contiene el substring buscado
-            for (const auto& data_file_interested : registers) {
-                results.insert(data_file_interested);
+            for (const auto& file_info : registers) {
+                //buscar todos los que tienen ese ip
+                for (const auto& ip_info: fileinfo_sip[file_info]){
+                    results.insert({file_info,ip_info});
+                }
             }
         }
     }
     return results;
 }
-
-
-
 
 
 // Función start_server modificada para manejar una conexión específica
@@ -63,7 +42,7 @@ void start_server(int client_socket) {
         cerr << "Error recibiendo la ip verdadera del cliente\n";
         return;
     }
-    cout << "Hablando con " << ip_port_to_str(ip_port_client) << endl;
+    //cout << "Hablando con " << ip_port_to_str(ip_port_client) << endl;
     //Recibir cantida de archivos iniciales por cliente
 
     int cant_archivos;
@@ -73,7 +52,7 @@ void start_server(int client_socket) {
         return;
     }
 
-    std::map<FileInfo, std::string> local;
+    map<FileInfo, string> local;
 
     // Recibir datos de cada archivo
     for (int i = 0; i < cant_archivos; ++i) {
@@ -98,7 +77,7 @@ void start_server(int client_socket) {
     mutexito.unlock();
 
     while (true){
-        cout << "Esperando instruccion\n";
+        cout << "Esperando instrucciones\n";
         //Recibir instruccion
         string instr;
         if (!receiveStringThroughRed(client_socket,instr)){
@@ -107,7 +86,6 @@ void start_server(int client_socket) {
         }
 
         if (instr == "request"){
-            cout << "Estoy en request\n";
             //Recibir S H H del cliente
             FileInfo info_selected;
             if (!receiveFileInfoThroughRed(client_socket,info_selected)){
@@ -186,7 +164,7 @@ void start_server(int client_socket) {
 
             //Buscar archivos que contienen el substring
             mutexito.lock();
-            set<FileInfo> data = searchFileBySubstring(file_name);
+            set<pairfi_ip> data = searchFileBySubstring(file_name);
             mutexito.unlock();
 
 
@@ -197,10 +175,9 @@ void start_server(int client_socket) {
             }
             
             //Enviar cada archivo
-            for (auto &cur_data: data){
-                if (!sendFileInfoThroughRed(client_socket,cur_data)){
-                    cerr << "Error enviando S H H de un archivo al cliente\n";
-                    break;
+            for (auto &fi_ip: data){
+                if (!send_pairFi_Ip_ThroughRed(client_socket,fi_ip)){
+                    cerr << "Error comunicando pair de file info e ip\n";
                 }
             }
         } else if (instr=="wq;"){
@@ -223,7 +200,7 @@ void start(ip_port ip_server){
 
     // Crear el socket de escucha
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        std::cerr << "Error al crear el socket" << std::endl;
+        cerr << "Error al crear el socket" << endl;
         return;
     }
 
@@ -232,17 +209,17 @@ void start(ip_port ip_server){
     address.sin_addr.s_addr = inet_addr(ip.c_str());
     address.sin_port = htons(port);
     if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        std::cerr << "Error al hacer bind" << std::endl;
+        cerr << "Error al hacer bind" << endl;
         close(server_fd);
         return;
     }
     if (listen(server_fd, 10) < 0) {
-        std::cerr << "Error al escuchar" << std::endl;
+        cerr << "Error al escuchar" << endl;
         close(server_fd);
         return;
     }
 
-    std::cout << "Servidor escuchando en " << ip << ":" << port << "..." << std::endl;
+    cout << "Servidor escuchando en " << ip << ":" << port << "..." << endl;
 
     while (true) {
         int client_socket;
@@ -251,7 +228,7 @@ void start(ip_port ip_server){
 
         // Aceptar una nueva conexión de cliente
         if ((client_socket = accept(server_fd, (struct sockaddr*)&client_address, &client_addrlen)) < 0) {
-            std::cerr << "Error al aceptar conexión" << std::endl;
+            cerr << "Error al aceptar conexión" << endl;
             continue;
         }
 
@@ -260,13 +237,13 @@ void start(ip_port ip_server){
         inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
         int client_port = ntohs(client_address.sin_port);
 
-        cout << "\nNueva conexión recibida supuestamente de aqui: " << client_ip << ":" << client_port << "\n\n";
+        cout << "\nNueva conexión recibida: " << client_ip << ":" << client_port << "\n\n";
 
         // Pasar IP y puerto del cliente a `start_server`
         ip_port client_info = {client_ip, client_port};
 
         // Crear un hilo para cada cliente usando `start_server`
-        std::thread client_thread(start_server, client_socket);
+        thread client_thread(start_server, client_socket);
         client_thread.detach();
     }
 
@@ -289,6 +266,15 @@ int main(int argc, char* argv[]){
     return 0;
 }
 
-// g++ comunes.cpp servidor.cpp -o servidor
-// ./servidor 127.0.0.1:8080
-//request 4261194 399067255 45019805
+/*
+g++ comunes.cpp servidor.cpp -o servidor
+
+./servidor 127.0.0.1:8080
+./servidor 192.168.100.197:8080
+
+./cliente 192.168.100.197:8080 192.168.100.197:8081 /home/santy/Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_1
+./cliente 192.168.100.197:8080 192.168.100.197:8082 /home/santy/Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_2
+./cliente 192.168.100.197:8080 192.168.100.197:8083 /home/santy/Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_3
+./cliente 192.168.100.197:8080 192.168.100.197:8085 /home/santy/Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_5
+
+*/

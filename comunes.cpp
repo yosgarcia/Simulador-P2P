@@ -248,11 +248,30 @@ bool sendIpThroughRed(int sock, ip_port ip){
         return false;
     }
     if (!sendIntThroughRed(sock,ip.port)){
-        std::cerr << "Error enviando la el puerto " << ip.port << std::endl;
+        std::cerr << "Error enviando el puerto " << ip.port << std::endl;
         return false;
     }
     return true;
 
+}
+
+bool send_pairFi_Ip_ThroughRed(int sock, pairfi_ip p_fi_ip){
+    if (!sendFileInfoThroughRed(sock,p_fi_ip.first)){
+        return false;
+    }
+    if (!sendIpThroughRed(sock,p_fi_ip.second)){
+        return false;
+    }
+    return true;
+}
+bool receive_pairFi_Ip_ThroughRed(int sock, pairfi_ip &p_fi_ip){
+    if (!receiveFileInfoThroughRed(sock,p_fi_ip.first)){
+        return false;
+    }
+    if (!receiveIpThroughRed(sock,p_fi_ip.second)){
+        return false;
+    }
+    return true;
 }
 
 bool sendBytesThroughRed(int sock, std::vector<char> &data) {

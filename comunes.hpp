@@ -56,6 +56,9 @@ public:
         return std::tie(hash1, hash2, size) == std::tie(other.hash1, other.hash2, other.size);
     }
 };
+
+typedef std::pair<FileInfo,ip_port> pairfi_ip;
+
 std::string ip_port_to_str(ip_port info);
 bool parseIpPort(const std::string& str, ip_port& result);
 std::string getFirstTokenIstring(std::istringstream &stream);
@@ -73,8 +76,10 @@ bool sendFileInfoThroughRed(int sock, FileInfo fileInfo);
 bool receiveFileInfoThroughRed(int sock, FileInfo &fileInfo);
 bool sendFileInfoWithNameThroughRed(int sock, FileInfo fileInfo, std::string fileName);
 bool receiveFileInfoWithNameThroughRed(int sock, FileInfo &fileInfo, std::string &fileName);
-bool receiveIpThroughRed(int sock, ip_port &ip);
 bool sendIpThroughRed(int sock, ip_port ip);
+bool receiveIpThroughRed(int sock, ip_port &ip);
+bool send_pairFi_Ip_ThroughRed(int sock, pairfi_ip p_fi_ip);
+bool receive_pairFi_Ip_ThroughRed(int sock, pairfi_ip &p_fi_ip);
 bool sendBytesThroughRed(int sock, std::vector<char> &data);
 bool receiveBytesThroughRed(int sock, std::vector<char> &buffer);
 
