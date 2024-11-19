@@ -11,5 +11,6 @@ g++ comunes.cpp cliente.cpp -o cliente
 ./cliente 127.0.0.1:8080 127.0.0.11:8081 /home/santy/Documentos/Sistemas Operativos/Simulador-P2P/carpetas_prueba/carpeta_1
 
 
-### Santiago Ramos
-### Yosward Garcia
+### Autores
+Santiago Ramos
+Yosward Garcia
