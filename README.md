@@ -3,6 +3,7 @@ El proyecto consiste en hacer una simulación de un sistema P2P que se comunique
 
 # Compilar
 g++ comunes.cpp servidor.cpp -o servidor
+
 g++ comunes.cpp cliente.cpp -o cliente
 
 # Ejecutar (usar ip real)
